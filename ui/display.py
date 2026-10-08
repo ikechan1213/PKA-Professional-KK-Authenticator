@@ -1,11 +1,25 @@
-def show_centering_result(horizontal, vertical):
-    print("==============================")
-    print("       CENTERING RESULT")
-    print("==============================")
-    print(f"Horizontal : {horizontal}")
-    print(f"Vertical   : {vertical}")
-    print("==============================")
+import cv2
 
 
-if __name__ == "__main__":
-    show_centering_result("52/48", "55/45")
+def draw_centering_result(frame, horizontal, vertical):
+    cv2.putText(
+        frame,
+        f"Horizontal: {horizontal}",
+        (30, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 0),
+        2
+    )
+
+    cv2.putText(
+        frame,
+        f"Vertical: {vertical}",
+        (30, 80),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 0),
+        2
+    )
+
+    return frame
