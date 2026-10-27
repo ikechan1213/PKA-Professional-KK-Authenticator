@@ -499,6 +499,105 @@ def detect_inner_quad(image, contour):
 
     return corners
 
+
+def calculate_centering(image, inner_corners):
+    """
+    透視変換後のカード画像と内側境界の四隅から、
+    上下左右の余白と、それぞれの比率を計算する。
+
+    ここで求めるのは画像上の余白の比率であり、
+    PSAの正式な評価結果ではない。
+    """
+
+    # 四隅が取得できているか確認する
+    if inner_corners is None or len(inner_corners) != 4:
+        print("余白を計算できる四隅がありません")
+        return None
+
+    # 画像の高さと幅を取得する
+    height, width = image.shape[:2]
+
+    # 四隅を左上、右上、右下、左下の順に並べる
+    corners = order_corners(inner_corners)
+
+    # 四隅の座標を取り出す
+    top_left = corners[0]
+    top_right = corners[1]
+    bottom_right = corners[2]
+    bottom_left = corners[3]
+
+    # 左右の境界は、各辺の2点の平均位置で求める
+    left_x = (top_left[0] + bottom_left[0]) / 2
+    right_x = (top_right[0] + bottom_right[0]) / 2
+
+    # 上下の境界も、各辺の2点の平均位置で求める
+    top_y = (top_left[1] + top_right[1]) / 2
+    bottom_y = (bottom_left[1] + bottom_right[1]) / 2
+
+    # 画像の端から内側境界までの距離を求める
+    left_margin = left_x
+    right_margin = (width - 1) - right_x
+    top_margin = top_y
+    bottom_margin = (height - 1) - bottom_y
+
+    # 計算結果が不正でないか確認する
+    margins = [
+        left_margin,
+        right_margin,
+        top_margin,
+        bottom_margin
+    ]
+
+    if any(margin < 0 for margin in margins):
+        print("内側境界が画像の外側にあるため、計算を中止します")
+        return None
+
+    # 左右・上下それぞれの合計余白を求める
+    horizontal_total = left_margin + right_margin
+    vertical_total = top_margin + bottom_margin
+
+    # 余白の合計が0の場合は比率を計算できない
+    if horizontal_total <= 0 or vertical_total <= 0:
+        print("余白の合計が0のため、比率を計算できません")
+        return None
+
+    # 左右それぞれの比率を百分率で計算する
+    left_percent = left_margin / horizontal_total * 100
+    right_percent = right_margin / horizontal_total * 100
+
+    # 上下それぞれの比率を百分率で計算する
+    top_percent = top_margin / vertical_total * 100
+    bottom_percent = bottom_margin / vertical_total * 100
+
+    # 結果を表示する
+    print("\n===== センタリング測定結果（試作版） =====")
+
+    print(f"左の余白:   {left_margin:.2f} px")
+    print(f"右の余白:   {right_margin:.2f} px")
+    print(f"上の余白:   {top_margin:.2f} px")
+    print(f"下の余白:   {bottom_margin:.2f} px")
+
+    print("\n----- 左右の比率 -----")
+    print(f"左: {left_percent:.2f}%")
+    print(f"右: {right_percent:.2f}%")
+    print(f"比率: {left_percent:.2f}:{right_percent:.2f}")
+
+    print("\n----- 上下の比率 -----")
+    print(f"上: {top_percent:.2f}%")
+    print(f"下: {bottom_percent:.2f}%")
+    print(f"比率: {top_percent:.2f}:{bottom_percent:.2f}")
+
+    return {
+        "left_margin": left_margin,
+        "right_margin": right_margin,
+        "top_margin": top_margin,
+        "bottom_margin": bottom_margin,
+        "left_percent": left_percent,
+        "right_percent": right_percent,
+        "top_percent": top_percent,
+        "bottom_percent": bottom_percent
+    }
+
 def detect_outer_boundary(gray, edges, corners, band=35):
     """
     カード外周の外側にあるエッジから境界候補を検出する。
@@ -929,6 +1028,17 @@ def detect_card(image):
     else:
         inner_corners = None
         print("内側の四角形候補を作成できませんでした")
+
+    
+# 内側境界の四隅が取得できた場合だけ余白を計算する
+    if inner_corners is not None:
+        centering_result = calculate_centering(
+            warped_card,
+            inner_corners
+        )
+    else:
+        centering_result = None
+        print("四隅が取得できないため、余白の計算をスキップします")
 
     print(
         "透視変換後の画像サイズ:",
