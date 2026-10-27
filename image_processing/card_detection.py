@@ -598,6 +598,279 @@ def calculate_centering(image, inner_corners):
         "bottom_percent": bottom_percent
     }
 
+
+
+def draw_centering_overlay(image, inner_corners, result):
+    """
+    内側境界と上下左右のセンタリング比率を画像に描画する。
+    画像ファイルを保存し、表示用の画像を返す。
+    """
+
+    if inner_corners is None or result is None:
+        print("描画に必要な測定結果がありません")
+        return None
+
+    # 元画像を変更しないようにコピーする
+    preview = image.copy()
+
+    height, width = preview.shape[:2]
+
+    # 四隅を左上、右上、右下、左下の順に並べる
+    corners = order_corners(inner_corners)
+
+    top_left = corners[0]
+    top_right = corners[1]
+    bottom_right = corners[2]
+    bottom_left = corners[3]
+
+    # 内側境界を緑色で描画する
+    polygon = np.round(corners).astype(np.int32).reshape((-1, 1, 2))
+
+    cv2.polylines(
+        preview,
+        [polygon],
+        True,
+        (0, 255, 0),
+        2
+    )
+
+    # 各辺の中央付近を求める
+    top_mid = (
+        int(round((top_left[0] + top_right[0]) / 2)),
+        int(round((top_left[1] + top_right[1]) / 2))
+    )
+
+    bottom_mid = (
+        int(round((bottom_left[0] + bottom_right[0]) / 2)),
+        int(round((bottom_left[1] + bottom_right[1]) / 2))
+    )
+
+    left_mid = (
+        int(round((top_left[0] + bottom_left[0]) / 2)),
+        int(round((top_left[1] + bottom_left[1]) / 2))
+    )
+
+    right_mid = (
+        int(round((top_right[0] + bottom_right[0]) / 2)),
+        int(round((top_right[1] + bottom_right[1]) / 2))
+    )
+
+    # 上下の余白を示す線（青色）
+    cv2.line(
+        preview,
+        (top_mid[0], 0),
+        top_mid,
+        (255, 0, 0),
+        2
+    )
+
+    cv2.line(
+        preview,
+        bottom_mid,
+        (bottom_mid[0], height - 1),
+        (255, 0, 0),
+        2
+    )
+
+    # 左右の余白を示す線（オレンジ色）
+    cv2.line(
+        preview,
+        (0, left_mid[1]),
+        left_mid,
+        (0, 165, 255),
+        2
+    )
+
+    cv2.line(
+        preview,
+        right_mid,
+        (width - 1, right_mid[1]),
+        (0, 165, 255),
+        2
+    )
+
+    
+    # 表示設定
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.55
+    thickness = 2
+    text_color = (0, 165, 255)
+
+    # 上辺の灰色部分に表示する文字列
+    left_text = f"Left: {result['left_percent']:.2f}%"
+    top_text = f"Top: {result['top_percent']:.2f}%"
+    right_text = f"Right: {result['right_percent']:.2f}%"
+
+    # 文字のサイズを取得する
+    left_size = cv2.getTextSize(
+        left_text, font, scale, thickness
+    )[0]
+
+    top_size = cv2.getTextSize(
+        top_text, font, scale, thickness
+    )[0]
+
+    right_size = cv2.getTextSize(
+        right_text, font, scale, thickness
+    )[0]
+
+    # 左端・中央・右端の表示位置を計算する
+    left_x = 8
+    top_x = max(8, (width - top_size[0]) // 2 + 50)
+    right_x = max(8, width - right_size[0] - 8)
+
+    # 上辺の灰色部分に3つの比率を描画する
+    # 文字が上端から切れないように、y座標に余裕を持たせる
+    text_y = 20
+
+    cv2.putText(
+        preview,
+        left_text,
+        (left_x, text_y),
+        font,
+        scale,
+        text_color,
+        thickness,
+        cv2.LINE_AA
+    )
+#白い縁取りを先に描画する
+    cv2.putText(
+    preview,
+    top_text,
+    (top_x, text_y),
+    font,
+    scale,
+    (255, 255, 255),
+    thickness + 3,
+    cv2.LINE_AA
+)
+
+# 青い文字を上から描画する
+    cv2.putText(
+        preview,
+        top_text,
+        (top_x, text_y),
+        font,
+        scale,
+        (255, 0, 0),
+        thickness,
+        cv2.LINE_AA
+    )
+
+    cv2.putText(
+        preview,
+        right_text,
+        (right_x, text_y),
+        font,
+        scale,
+        text_color,
+        thickness,
+        cv2.LINE_AA
+    )
+
+    # 下の比率を画像下部に表示する
+    
+    # Bottomの文字列を作成する
+    bottom_text = f"Bottom: {result['bottom_percent']:.2f}%"
+
+    # 文字列の幅と高さを取得する
+    bottom_size = cv2.getTextSize(
+        bottom_text,
+        font,
+        scale,
+        thickness
+    )[0]
+
+    # 下辺の右端に表示する位置を計算する
+    bottom_x = width - bottom_size[0] - 80
+    bottom_y = height - 7
+
+    # Bottomの比率を描画する
+    # 白い縁取りを先に描画する
+    cv2.putText(
+        preview,
+        bottom_text,
+        (bottom_x, bottom_y),
+        font,
+        scale,
+        (255, 255, 255),
+        thickness + 3,
+        cv2.LINE_AA
+    )
+
+    # 青い文字を上から描画する
+    cv2.putText(
+        preview,
+        bottom_text,
+        (bottom_x, bottom_y),
+        font,
+        scale,
+        (255, 0, 0),
+        thickness,
+        cv2.LINE_AA
+    )
+
+    # 測定結果の画像を保存する
+    output_path = "debug_centering_overlay.jpg"
+
+    saved = cv2.imwrite(
+        output_path,
+        preview
+    )
+
+    if saved:
+        print(f"{output_path} を保存しました")
+    else:
+        print(f"{output_path} の保存に失敗しました")
+
+    # PC画面に測定結果を新しいウィンドウで表示する
+    
+    
+    # 測定結果の画像を保存する
+    # 保存される画像は縮小しない
+    output_path = "debug_centering_overlay.jpg"
+
+    saved = cv2.imwrite(
+        output_path,
+        preview
+    )
+
+    if saved:
+        print(f"{output_path} を保存しました")
+    else:
+        print(f"{output_path} の保存に失敗しました")
+
+    # 画面表示用の画像だけを縮小する
+    display_max_width = 600
+    display_max_height = 700
+
+    height, width = preview.shape[:2]
+
+    # ウィンドウに収まる縮小率を計算する
+    scale = min(
+        display_max_width / width,
+        display_max_height / height,
+        1.0
+    )
+
+    display_image = cv2.resize(
+        preview,
+        None,
+        fx=scale,
+        fy=scale,
+        interpolation=cv2.INTER_AREA
+    )
+
+    # 縮小した画像を新しいウィンドウに表示する
+    cv2.imshow(
+        "Centering Measurement",
+        display_image
+    )
+
+    return preview
+    
+    
+
 def detect_outer_boundary(gray, edges, corners, band=35):
     """
     カード外周の外側にあるエッジから境界候補を検出する。
@@ -1039,6 +1312,14 @@ def detect_card(image):
     else:
         centering_result = None
         print("四隅が取得できないため、余白の計算をスキップします")
+
+        # 余白と内側境界を画像に描画する
+    if centering_result is not None:
+        draw_centering_overlay(
+        warped_card,
+        inner_corners,
+        centering_result
+    )
 
     print(
         "透視変換後の画像サイズ:",
