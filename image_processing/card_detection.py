@@ -38,6 +38,12 @@ def fit_edge_line(edges, p1, p2, band=18):
     ys, xs = np.where(edges > 0)
     points = np.column_stack((xs, ys)).astype(np.float32)
 
+    print("edges.shape:", edges.shape)
+    print("points.shape:", points.shape)
+    print("p1. shape:", p1.shape)
+    print("p2. shape:", p2.shape)
+    print("points:", points[:5])
+
     relative = points - p1
 
     # 辺に沿った位置
@@ -114,6 +120,229 @@ def intersect_lines(line1, line2):
         [x1 + t * vx1, y1 + t * vy1],
         dtype=np.float32
     )
+
+
+
+def detect_outer_boundary(gray, edges, corners, band=35):
+    """
+    カード外周の外側にあるエッジから境界候補を検出する。
+    下辺は区間ごとに最も近いエッジを選んで推定する。
+    """
+
+    corners = order_corners(corners)
+
+    ys, xs = np.where(edges > 0)
+    points = np.column_stack((xs, ys)).astype(np.float32)
+
+    lines = []
+
+    for i in range(4):
+        p1 = corners[i]
+        p2 = corners[(i + 1) % 4]
+
+        direction = p2 - p1
+        length = np.linalg.norm(direction)
+
+        if length < 1:
+            lines.append(None)
+            continue
+
+        unit = direction / length
+        relative = points - p1
+
+        # 辺に沿った位置
+        projection = relative @ unit
+
+        # 辺からの符号付き距離
+        signed_distance = (
+            direction[0] * relative[:, 1]
+            - direction[1] * relative[:, 0]
+        ) / length
+
+        # 四角形の外側にある点だけを抽出
+        distance = -signed_distance
+
+        
+        # 下辺は、明るさの変化を使って境界を探す
+        is_bottom_edge = (i == 2)
+
+        if is_bottom_edge:
+            # 下辺は現在の線より外側25ピクセルまで探索
+            search_band = 60
+        else:
+            search_band = band
+
+        distance = -signed_distance
+
+        mask = (
+            (projection > length * 0.10)
+            & (projection < length * 0.90)
+            & (distance > 2)
+            & (distance < search_band)
+        )
+
+        selected = points[mask]
+        selected_projection = projection[mask]
+        selected_distance = distance[mask]
+
+        if is_bottom_edge:
+            # グレースケール画像から明るさの変化を計算
+            gradient_y = cv2.Sobel(
+                gray,
+                cv2.CV_32F,
+                0,
+                1,
+                ksize=3
+            )
+
+            # 下辺を横方向に30区間に分割
+            number_of_bins = 30
+            bin_width = length * 0.8 / number_of_bins
+            chosen_points = []
+
+            for bin_index in range(number_of_bins):
+                bin_center_ratio = (
+                    (bin_index + 0.5) / number_of_bins
+                )
+                # 中央35〜65%は文字などの影響を避けるため除外
+                if 0.35 < bin_center_ratio < 0.65:
+                    continue
+                start = length * 0.1 + bin_index * bin_width
+                end = start + bin_width
+
+                in_bin = (
+                    (selected_projection >= start)
+                    & (selected_projection < end)
+                )
+
+                if not np.any(in_bin):
+                    continue
+
+                bin_points = selected[in_bin]
+                bin_distances = selected_distance[in_bin]
+
+                # 元の線から外側へ進みながら、
+                # 明るさの変化が強いエッジを優先する
+                best_point = None
+                best_score = -1
+
+                for point, distance_value in zip(
+                    bin_points, bin_distances
+                ):
+                    x = int(round(point[0]))
+                    y = int(round(point[1]))
+
+                    if (
+                        x < 1 or x >= gray.shape[1] - 1
+                        or y < 1 or y >= gray.shape[0] - 1
+                    ):
+                        continue
+
+                    # 下辺付近で縦方向の明るさ変化を評価
+                    score = abs(float(gradient_y[y, x]))
+
+                    # 遠い点を少しだけ不利にする
+                    score /= (1.0 + distance_value * 0.01)
+
+                    if score > best_score:
+                        best_score = score
+                        best_point = point
+
+                if best_point is not None:
+                    chosen_points.append(best_point)
+                    bottom_debug = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+                    for point in chosen_points:
+                        x = int(round(point[0]))
+                        y = int(round(point[1]))
+                        cv2.circle(
+                            bottom_debug,
+                            (x, y),
+                            4,
+                            (0, 0, 255),
+                            -1
+                        )
+                    cv2.imwrite(
+                        "debug_bottom_points.jpg",
+                        bottom_debug
+                    )
+            selected = np.array(
+                chosen_points,
+                dtype=np.float32
+            )
+
+            if len(selected) < 8:
+                print("下辺: 境界点が不足しています")
+                lines.append(None)
+                continue
+
+        elif len(selected) < 20:
+            print(f"辺{i + 1}: 外側のエッジ点が不足")
+            lines.append(None)
+            continue
+        
+        
+        # 選択した点から直線を推定
+        if len(selected) < 2:
+            print(f"辺{i + 1}: 直線推定に使える点が不足")
+            lines.append(None)
+            continue
+
+        vx, vy, x0, y0 = cv2.fitLine(
+            selected,
+            cv2.DIST_L1,
+            0,
+            0.01,
+            0.01
+        ).flatten()
+
+        line = np.array(
+            [vx, vy, x0, y0],
+            dtype=np.float64
+        )
+
+        lines.append(line)
+
+        print(
+            f"辺{i + 1}: 直線推定に使用した点数="
+            f"{len(selected)}"
+        )
+
+        print(
+            f"辺{i + 1}: 直線推定に使用した点数="
+            f"{len(selected)}"
+        )
+
+    # 隣接する直線の交点から四隅を求める
+    outer_corners = []
+
+    for i in range(4):
+        previous_line = lines[(i - 1) % 4]
+        current_line = lines[i]
+
+        corner = intersect_lines(previous_line, current_line)
+
+        if corner is None:
+            print("外側の境界は4つの角を確定できませんでした")
+            return None
+
+        outer_corners.append(corner)
+
+    result = np.array(outer_corners, dtype=np.float32)
+
+    # 画像外にある候補は採用しない
+    height, width = edges.shape
+
+    if (
+        np.any(result[:, 0] < 0)
+        or np.any(result[:, 0] >= width)
+        or np.any(result[:, 1] < 0)
+        or np.any(result[:, 1] >= height)
+    ):
+        print("外側の境界候補が画像の範囲外です")
+        return None
+
+    return result
 
 
 def detect_card(image):
@@ -265,15 +494,32 @@ def detect_card(image):
 
     boundary_edges = cv2.Canny(blurred, 25, 80)
 
-    # 現在のカード外周をオレンジ色の線で表示する
-    # ※これは新たな検出結果ではなく、比較用の表示
-    cv2.polylines(
-        debug,
-        [refined_poly],
-        True,
-        (0, 165, 255),
-        2
-    )
+    
+    # 背景とカード本体の境界候補を独立して検出
+    outer_corners = detect_outer_boundary(
+    gray,
+    boundary_edges,
+    refined_corners,
+    band=35
+)
+
+    if outer_corners is not None:
+        outer_poly = np.round(
+            outer_corners
+        ).astype(np.int32).reshape((-1, 1, 2))
+
+        # オレンジ色で外側の境界候補を表示
+        cv2.polylines(
+            debug,
+            [outer_poly],
+            True,
+            (0, 165, 255),
+            3
+        )
+
+        print("外側の境界候補:", outer_corners.tolist())
+    else:
+        print("外側の境界は検出できませんでした")
 
     # エッジ画像を保存して、背景との境界を確認できるようにする
     cv2.imwrite("debug_boundary_edges.jpg", boundary_edges)
@@ -291,13 +537,20 @@ def detect_card(image):
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
+    # 最終結果に使う四隅を決める
+    # 外側の境界を検出できた場合は、そちらを採用する
+    if outer_corners is not None:
+        final_corners = outer_corners
+    else:
+        # 外側の境界を検出できなかった場合は従来の四隅を使う
+        final_corners = refined_corners
     # 元画像の座標に戻す
     result = [
         (
             int(round(point[0] / scale)),
             int(round(point[1] / scale))
         )
-        for point in refined_corners
+        for point in final_corners
     ]
 
     print("補正前の四隅:", original_corners.tolist())
