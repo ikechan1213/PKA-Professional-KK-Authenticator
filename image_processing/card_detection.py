@@ -122,6 +122,52 @@ def intersect_lines(line1, line2):
     )
 
 
+def warp_card(image, corners):
+    """
+    カードの四隅を使って透視変換し、
+    正面から見た長方形の画像を作成する。
+    """
+
+    # 四隅を時計回りに並べる
+    corners = order_corners(corners).astype(np.float32)
+
+    # 各辺の長さを計算する
+    top_width = np.linalg.norm(corners[1] - corners[0])
+    bottom_width = np.linalg.norm(corners[2] - corners[3])
+    left_height = np.linalg.norm(corners[3] - corners[0])
+    right_height = np.linalg.norm(corners[2] - corners[1])
+
+    # 上下・左右で長い方を出力サイズにする
+    output_width = int(round(max(top_width, bottom_width)))
+    output_height = int(round(max(left_height, right_height)))
+
+    if output_width < 2 or output_height < 2:
+        raise ValueError("透視変換後の画像サイズが不正です")
+
+    # 変換後の四隅を定義する
+    destination = np.array([
+        [0, 0],
+        [output_width - 1, 0],
+        [output_width - 1, output_height - 1],
+        [0, output_height - 1]
+    ], dtype=np.float32)
+
+    # 変換前と変換後の四隅から変換行列を求める
+    matrix = cv2.getPerspectiveTransform(
+        corners,
+        destination
+    )
+
+    # 透視変換を実行する
+    warped = cv2.warpPerspective(
+        image,
+        matrix,
+        (output_width, output_height),
+        flags=cv2.INTER_CUBIC
+    )
+
+    return warped
+
 
 def detect_outer_boundary(gray, edges, corners, band=35):
     """
@@ -520,7 +566,30 @@ def detect_card(image):
         print("外側の境界候補:", outer_corners.tolist())
     else:
         print("外側の境界は検出できませんでした")
+    
+    # 透視変換に使う四隅を選択する
+    if outer_corners is not None:
+        warp_corners = outer_corners
+        print("透視変換: 外側の境界を使用します")
+    else:
+        warp_corners = refined_corners
+        print("透視変換: 補正後の四隅を使用します")
 
+    # カードを正面向きの長方形に変換する
+    warped_card = warp_card(small, warp_corners)
+
+    # 変換後の画像を保存する
+    cv2.imwrite(
+        "debug_warped_card.jpg",
+        warped_card
+    )
+
+    print(
+        "透視変換後の画像サイズ:",
+        warped_card.shape[1],
+        "x",
+        warped_card.shape[0]
+    )
     # エッジ画像を保存して、背景との境界を確認できるようにする
     cv2.imwrite("debug_boundary_edges.jpg", boundary_edges)
     cv2.imwrite("debug_card_refined.jpg", debug)
@@ -533,7 +602,25 @@ def detect_card(image):
         interpolation=cv2.INTER_AREA
     )
 
+    
+    # 検出結果の確認画面
     cv2.imshow("Card Edge Refinement", preview)
+
+    # 透視変換したカードの確認画面
+    warped_preview = cv2.resize(
+        warped_card,
+        None,
+        fx=0.6,
+        fy=0.6,
+        interpolation=cv2.INTER_AREA
+    )
+
+    cv2.imshow(
+        "Perspective Transform",
+        warped_preview
+    )
+
+    # どちらかの画面でキーを押すと終了
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
