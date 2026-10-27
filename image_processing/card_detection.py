@@ -396,6 +396,109 @@ def detect_inner_boundary_candidates(image):
     # 次の段階で使えるように輪郭を返す
     return largest_contour
 
+
+def detect_inner_quad(image, contour):
+    """
+    検出した内側境界の輪郭から、
+    四角形の候補を推定して確認用画像を保存する。
+
+    この段階では、評価に使う境界としてはまだ確定しない。
+    """
+
+    if contour is None or len(contour) < 4:
+        print("四角形の推定に必要な輪郭がありません")
+        return None
+
+    # 1. 輪郭の周囲の長さを計算する
+    perimeter = cv2.arcLength(
+        contour,
+        True
+    )
+
+    # 2. 輪郭を少ない点で近似する
+    # epsilonが小さいほど元の輪郭に近くなる
+    approx = cv2.approxPolyDP(
+        contour,
+        0.02 * perimeter,
+        True
+    )
+
+    print("輪郭近似後の頂点数:", len(approx))
+
+    # 3. 近似した輪郭が4点なら、その点を候補にする
+    if len(approx) == 4 and cv2.isContourConvex(approx):
+        corners = approx.reshape(4, 2).astype(np.float32)
+        method = "輪郭近似"
+
+    else:
+        # 4. 4点にならなければ、回転した長方形で近似する
+        # これは代替候補であり、正しい境界とは限らない
+        rect = cv2.minAreaRect(contour)
+        corners = cv2.boxPoints(rect).astype(np.float32)
+        method = "最小外接回転矩形"
+
+    # 5. 四隅を時計回りに並べる
+    corners = order_corners(corners)
+
+    # 6. 元画像をコピーして描画する
+    preview = image.copy()
+
+    polygon = np.round(
+        corners
+    ).astype(np.int32).reshape((-1, 1, 2))
+
+    # 四角形の候補を黄色で描画する
+    cv2.polylines(
+        preview,
+        [polygon],
+        True,
+        (0, 255, 255),
+        3
+    )
+
+    # 各頂点に赤い丸を描画する
+    for index, point in enumerate(corners):
+        x = int(round(point[0]))
+        y = int(round(point[1]))
+
+        cv2.circle(
+            preview,
+            (x, y),
+            6,
+            (0, 0, 255),
+            -1
+        )
+
+        cv2.putText(
+            preview,
+            str(index + 1),
+            (x + 8, y - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 0, 255),
+            2
+        )
+
+    # 7. 確認用画像を保存する
+    cv2.imwrite(
+        "debug_inner_quad.jpg",
+        preview
+    )
+
+    # 8. 四隅の座標と使用した方法を表示する
+    print("四角形候補の推定方法:", method)
+    print("四角形候補の四隅:")
+
+    for index, point in enumerate(corners):
+        print(
+            f"  頂点{index + 1}: "
+            f"x={point[0]:.1f}, y={point[1]:.1f}"
+        )
+
+    print("debug_inner_quad.jpg を保存しました")
+
+    return corners
+
 def detect_outer_boundary(gray, edges, corners, band=35):
     """
     カード外周の外側にあるエッジから境界候補を検出する。
@@ -816,6 +919,16 @@ def detect_card(image):
     inner_contour = detect_inner_boundary_candidates(
     warped_card
     )
+
+    # 検出した輪郭から四角形の候補を推定する
+    if inner_contour is not None:
+        inner_corners = detect_inner_quad(
+        warped_card,
+        inner_contour
+    )
+    else:
+        inner_corners = None
+        print("内側の四角形候補を作成できませんでした")
 
     print(
         "透視変換後の画像サイズ:",
