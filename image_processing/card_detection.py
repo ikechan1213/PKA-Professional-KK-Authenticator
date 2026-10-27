@@ -169,6 +169,233 @@ def warp_card(image, corners):
     return warped
 
 
+def debug_inner_frame(image):
+    """
+    透視変換後のカード画像を分析し、
+    内側の境界を検出するための調査画像を保存する。
+
+    この段階では境界を確定せず、
+    色の違いや輪郭を目で確認する。
+    """
+
+    # 1. 元画像をコピーする
+    # 元の画像を変更しないようにするため
+    original = image.copy()
+
+    # 2. BGR形式からHSV形式に変換する
+    # HSVでは色相・彩度・明るさを分けて調べられる
+    hsv = cv2.cvtColor(
+        original,
+        cv2.COLOR_BGR2HSV
+    )
+
+    # 3. 彩度の画像を取り出す
+    # 彩度が高い部分ほど、色が鮮やかな傾向がある
+    saturation = hsv[:, :, 1]
+
+    # 彩度の違いを白黒画像として表示する
+    saturation_view = cv2.cvtColor(
+        saturation,
+        cv2.COLOR_GRAY2BGR
+    )
+
+    # 4. 彩度にしきい値を設定して白黒に分ける
+    # まずは調査用の仮の値として60を使う
+    _, saturation_mask = cv2.threshold(
+        saturation,
+        60,
+        255,
+        cv2.THRESH_BINARY
+    )
+
+    # 5. カード内の模様や文字などの輪郭を検出する
+    gray = cv2.cvtColor(
+        original,
+        cv2.COLOR_BGR2GRAY
+    )
+
+    edges = cv2.Canny(
+        gray,
+        50,
+        150
+    )
+
+    # 6. 輪郭を元画像に重ねる
+    edge_overlay = original.copy()
+
+    edge_overlay[edges > 0] = (0, 255, 0)
+
+    # 7. 各画像を保存する
+    cv2.imwrite(
+        "debug_inner_original.jpg",
+        original
+    )
+
+    cv2.imwrite(
+        "debug_inner_saturation.jpg",
+        saturation_view
+    )
+
+    cv2.imwrite(
+        "debug_inner_mask.jpg",
+        saturation_mask
+    )
+
+    cv2.imwrite(
+        "debug_inner_edges.jpg",
+        edges
+    )
+
+    cv2.imwrite(
+        "debug_inner_overlay.jpg",
+        edge_overlay
+    )
+
+    # 8. 画像サイズを表示する
+    height, width = original.shape[:2]
+
+    print("内側境界の調査を開始しました")
+    print("画像サイズ:", width, "x", height)
+    print("調査用画像を5枚保存しました")
+
+    print("debug_inner_original.jpg")
+    print("debug_inner_saturation.jpg")
+    print("debug_inner_mask.jpg")
+    print("debug_inner_edges.jpg")
+    print("debug_inner_overlay.jpg")
+
+
+
+def detect_inner_boundary_candidates(image):
+    """
+    カードの内側の境界候補を抽出する。
+
+    注意：
+    この関数は境界候補を探すための試作版。
+    検出結果を正しい印刷領域と確定するものではない。
+    """
+
+    # 1. 元画像をコピーする
+    original = image.copy()
+
+    # 2. BGR形式からHSV形式に変換する
+    hsv = cv2.cvtColor(
+        original,
+        cv2.COLOR_BGR2HSV
+    )
+
+    # 3. 彩度のチャンネルを取り出す
+    saturation = hsv[:, :, 1]
+
+    # 4. 彩度60を基準に白黒画像を作る
+    # 白：彩度が60を超える場所
+    # 黒：それ以外の場所
+    _, mask = cv2.threshold(
+        saturation,
+        60,
+        255,
+        cv2.THRESH_BINARY
+    )
+
+    # 5. 小さな隙間をつなげるためのカーネルを作る
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (11, 11)
+    )
+
+    # 6. モルフォロジー処理で細かい隙間を埋める
+    closed_mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_CLOSE,
+        kernel
+    )
+
+    # 7. 白い領域の外側の輪郭を検出する
+    contours, _ = cv2.findContours(
+        closed_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    # 8. 輪郭が見つからなかった場合は終了する
+    if not contours:
+        print("内側境界の候補が見つかりませんでした")
+
+        cv2.imwrite(
+            "debug_inner_candidate_mask.jpg",
+            closed_mask
+        )
+
+        return None
+
+    # 9. 面積が最大の輪郭を選ぶ
+    largest_contour = max(
+        contours,
+        key=cv2.contourArea
+    )
+
+    # 10. 輪郭の面積と画像全体の面積を調べる
+    contour_area = cv2.contourArea(
+        largest_contour
+    )
+
+    image_height, image_width = original.shape[:2]
+    image_area = image_width * image_height
+
+    area_ratio = contour_area / image_area
+
+    print("最大輪郭の面積:", contour_area)
+    print("画像全体に対する割合:", round(area_ratio, 4))
+
+    # 11. 最大輪郭を囲む長方形を求める
+    x, y, width, height = cv2.boundingRect(
+        largest_contour
+    )
+
+    print(
+        "境界候補の外接矩形:",
+        f"x={x}, y={y}, width={width}, height={height}"
+    )
+
+    # 12. 確認用画像に最大輪郭を緑色で描画する
+    preview = original.copy()
+
+    cv2.drawContours(
+        preview,
+        [largest_contour],
+        -1,
+        (0, 255, 0),
+        2
+    )
+
+    # 13. 最大輪郭を囲む長方形を青色で描画する
+    cv2.rectangle(
+        preview,
+        (x, y),
+        (x + width, y + height),
+        (255, 0, 0),
+        2
+    )
+
+    # 14. 調査用画像を保存する
+    cv2.imwrite(
+        "debug_inner_candidate_mask.jpg",
+        closed_mask
+    )
+
+    cv2.imwrite(
+        "debug_inner_candidate.jpg",
+        preview
+    )
+
+    # 15. 結果を表示する
+    print("境界候補の調査画像を保存しました")
+    print("debug_inner_candidate_mask.jpg")
+    print("debug_inner_candidate.jpg")
+
+    # 次の段階で使えるように輪郭を返す
+    return largest_contour
+
 def detect_outer_boundary(gray, edges, corners, band=35):
     """
     カード外周の外側にあるエッジから境界候補を検出する。
@@ -582,6 +809,12 @@ def detect_card(image):
     cv2.imwrite(
         "debug_warped_card.jpg",
         warped_card
+    )
+    # 透視変換後のカードを分析する
+    debug_inner_frame(warped_card)
+    # 内側の境界候補を検出する
+    inner_contour = detect_inner_boundary_candidates(
+    warped_card
     )
 
     print(
